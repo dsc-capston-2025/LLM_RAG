@@ -1,6 +1,6 @@
 # LLM_RAG
-LLM: kakaocorp/kanana-1.5-15.7b-a3b-instruct <br />
-RAG용 임베딩 모델: nlpai-lab/KURE-v1 <br />
+LLM: Google Gemini 2.5 Flash (Thinkg Effort:8192) <br />
+RAG용 임베딩 모델: nlpai-lab/KURE-v1 or Gemini-embedding-001  <br />
 
 RAG: LangChain 라이브러리 사용
 Function Calling 대응 코드 작성
