@@ -1,17 +1,29 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, views
 from flask_cors import CORS
+from openai import OpenAI
+from module import Generator
+from dotenv import load_dotenv
+
+OPENROUTER_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+api_client = OpenAI(
+  base_url="https://openrouter.ai/api/v1",
+  api_key=OPENROUTER_API_KEY,
+)
 
 app = Flask(__name__)
 
 # 개발 중인 React 앱(예: localhost:3000)에서 Flask 서버(예: localhost:5000)로 API를 요청할 때 필요.
 CORS(app)
-------------------------------------------------------------------
+
+
 def process_idea_text(text: str) -> dict:
     """
     Frontend에서 받은 텍스트(아이디어)를 처리하는 로직
 
    인터페이스 정의를 위한 임시 데이터 정의 
     """
+    response = Generator.execute_router(text, model_name="x-ai/grok-4.1-fast", api_client=api_client)
     print(f"전달받은 아이디어 텍스트: {text}")
 
     #response = my_patent_analysis_module.analyze(text)

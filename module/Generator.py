@@ -1,13 +1,9 @@
-import pandas as pd
-import chromadb
-import os
-import csv
-from chromadb.utils import embedding_functions
+from Retrieval import search_query
 import json, requests
 from openai import OpenAI
 
 ## 라우터 llm 시스템 프롬프트
-router_system_prompt = """
+ROUTER_SYSTEM_PROMPT = """
 당신은 사용자가 아이디어를 구체화하고 유사 특허를 검색할 수 있도록 돕는 'AI 특허 전략가'입니다.
 
 당신의 임무는 사용자의 [초기 아이디어]를 분석하여 다음 두 가지 시나리오 중 하나로 행동하는 것입니다.
@@ -51,7 +47,7 @@ arguments: query(변환된_검색_최적화_쿼리)
 """
 
 # 평가자 llm 시스템 프롬프트
-evaluation_system_prompt = """
+EVALUATION_SYSTEM_PROMPT = """
 당신은 사용자의 아이디어와 유사한 선행기술을 찾아내는 '선행기술 조사(Prior Art Search) 전문가'입니다.
 
 [특허 문서 조각]은 1차 AI 검색(RAG)을 통해 [사용자 아이디어]와 유사할 가능성이 있어 검색된 결과입니다.
@@ -85,7 +81,7 @@ evaluation_system_prompt = """
 """
 
 # --- 5. Function Calling 테스트 ---
-search_tools = [
+SEARCH_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -94,12 +90,12 @@ search_tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
+                    "query_text": {
                         "type": "string",
                         "description": "RAG 검색을 위한 기술적 서술문입니다. 단순 키워드 나열(예: 'A B C')을 절대 금지합니다. 대신 'A의 기능을 수행하기 위해 B에 결합된 C 장치'와 같이 구성 요소 간의 관계와 목적이 명확한 문장 형태(특허 명칭 스타일)로 입력해야 합니다."
                     }
                 },
-                "required": ["query"],
+                "required": ["query_text"],
             },
         },
     }
@@ -107,7 +103,7 @@ search_tools = [
 
 
 # 5-2. 도구(함수) 목록 정의 (OpenAI tool-call 형식)
-eval_tools = [
+EVAL_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -135,117 +131,8 @@ eval_tools = [
 
 TOOL_MAPPING = {"search_query": search_query}
 
-def get_unique_patents(results):
-    """
-    ChromaDB 검색 결과에서 청구 번호(ApplicationNumber) 기준으로 중복을 제거하고,
-    각 특허별 가장 유사도가 높은(distance가 낮은) 청크만 남겨 상위 k개를 반환합니다.
-    """
-    
-    # 1. 중복 제거를 위한 딕셔너리 (Key: 청구번호, Value: 해당 특허의 베스트 청크 정보)
-    unique_patents = {}
-    
-    # 검색된 결과의 개수만큼 반복
-    num_results = len(results['documents'][0])
-    
-    for i in range(num_results):
-        # 정보 추출
-        metadata = results['metadatas'][0][i]
-        document = results['documents'][0][i]
-        distance = results['distances'][0][i] # 코사인 유사도 거리 (낮을수록 유사함)
         
-        # 청구 번호 추출 (그룹화의 기준 Key)
-        app_number = metadata.get('ApplicationNumber')
-        
-        # 예외 처리: 청구 번호가 없는 경우 스킵 (데이터 무결성 체크)
-        if not app_number:
-            continue
-            
-        # 2. 그룹화 및 최적 청크 선별 로직
-        if app_number not in unique_patents:
-            # (A) 처음 발견된 특허라면 -> 딕셔너리에 저장
-            unique_patents[app_number] = {
-                "metadata": metadata,
-                "document": document,
-                "distance": distance
-            }
-        else:
-            # (B) 이미 발견된 특허라면 -> 더 유사한지(distance가 더 작은지) 비교
-            existing_distance = unique_patents[app_number]['distance']
-            
-            if distance < existing_distance:
-                # 현재 청크가 기존 청크보다 더 유사하다면 정보 갱신
-                unique_patents[app_number] = {
-                    "metadata": metadata,
-                    "document": document,
-                    "distance": distance
-                }
-    
-    # 3. 딕셔너리를 리스트로 변환
-    unique_list = list(unique_patents.values())
-    
-    # 4. 거리(distance) 기준으로 오름차순 정렬 (낮은게 1등)
-    unique_list.sort(key=lambda x: x['distance'])
-    
-    # 5. 사용자가 원하는 개수(target_k)만큼 자르기
-    #final_results = unique_list[:target_k]
-    final_results = unique_list
-    
-    return final_results
-
-def search_query(query, db_path="./patent_chroma_db", collection_name="patents", model_name="nlpai-lab/KURE-v1", n_results=20):
-    """
-    지정된 ChromaDB에서 아이디어(쿼리 텍스트)를 검색합니다.
-    """
-    query_text = query
-    print(f"\n--- 테스트 검색 시작 ---")
-    print(f"Query: '{query_text}'")
-    
-    try:
-        # 1. DB 클라이언트 초기화
-        client = chromadb.PersistentClient(path=db_path)
-        
-        # 2. 임베딩 함수 설정 (DB에 저장할 때 사용한 것과 동일해야 함)
-        try:
-            embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=model_name
-            )
-        except Exception as e:
-            print(f"검색을 위한 임베딩 모델 로드 중 오류 발생: {e}")
-            return
-        
-        # 3. 컬렉션 가져오기 (get_collection 사용)
-        try:
-            collection = client.get_collection(
-                name=collection_name,
-                embedding_function=embedding_func
-            )
-            print(f"'{collection_name}' 컬렉션 (문서 {collection.count()}개)을 성공적으로 불러왔습니다.")
-        except Exception as e:
-            print(f"'{collection_name}' 컬렉션 가져오기 중 오류 발생: {e}")
-            print("'process_patents_to_chroma' 함수가 먼저 성공적으로 실행되었는지 확인하세요.")
-            return
-
-        # 4. 쿼리 실행
-        results = collection.query(
-            query_texts=[query_text],
-            n_results=n_results,
-            include=["metadatas", "documents", "distances"] # 거리(유사도)도 포함
-        )
-        
-        print(f"\n--- 검색 결과 (상위 {len(results.get('ids', [[]])[0])}개) ---")
-        
-        # 5. 결과 출력
-        if not results or not results.get('ids', [[]])[0]:
-            print("검색 결과가 없습니다.")
-            return
-        results = get_unique_patents(results) #중복 특허 제거
-
-        return results
-            
-    except Exception as e:
-        print(f"검색 중 예상치 못한 오류가 발생했습니다: {e}")
-        
-def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/grok-4.1-fast"):
+def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/grok-4.1-fast", api_client=api_client):
     print(f"[사용자 아이디어]: {user_idea}")
     print(f"[특허 문서 조각]: {patent_chunk[:100]}")
 
@@ -254,7 +141,7 @@ def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/g
     messages = [
   {
     "role": "system",
-    "content": evaluation_system_prompt
+    "content": EVALUATION_SYSTEM_PROMPT
   },
   {
     "role": "user",
@@ -263,12 +150,12 @@ def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/g
 ]
     request = {
     "model": model_name,
-    "tools": eval_tools,
+    "tools": EVAL_TOOLS,
     "messages": messages
 }
     try:
         # 1. '아이디어 게이트키퍼' LLM 호출
-        response = openai_client.chat.completions.create(**request)
+        response = api_client.chat.completions.create(**request)
 
 
         print("\n[게이트키퍼 LLM 응답]")
@@ -289,16 +176,8 @@ def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/g
         print(f"\n--- [오류] LLM API 호출 또는 라우팅 중 오류 발생 ---")
         print(f"에러 상세: {e}")
         return {"status": "error", "message": str(e)}
-        
 
-OPENROUTER_API_KEY = ""
-
-openai_client = OpenAI(
-  base_url="https://openrouter.ai/api/v1",
-  api_key=OPENROUTER_API_KEY,
-)
-
-def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast"):
+def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_client=api_client):
     """
     사용자 아이디어를 받아 게이트키퍼 LLM을 호출하고,
     결과에 따라 RAG 검색을 트리거하거나 사용자에게 피드백을 반환합니다.
@@ -310,7 +189,7 @@ def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast"):
     messages = [
   {
     "role": "system",
-    "content": router_system_prompt
+    "content": ROUTER_SYSTEM_PROMPT
   },
   {
     "role": "user",
@@ -319,12 +198,12 @@ def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast"):
 ]
     request = {
     "model": model_name,
-    "tools": search_tools,
+    "tools": SEARCH_TOOLS,
     "messages": messages
 }
     try:
         # 1. '아이디어 게이트키퍼' LLM 호출
-        response = openai_client.chat.completions.create(**request)
+        response = api_client.chat.completions.create(**request)
 
 
         print("\n[게이트키퍼 LLM 응답]")

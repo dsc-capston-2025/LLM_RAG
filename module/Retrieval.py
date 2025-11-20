@@ -4,7 +4,7 @@ import os
 import csv
 from chromadb.utils import embedding_functions
 
-def get_unique_patents(results, target_k=3):
+def get_unique_patents(results):
     """
     ChromaDB 검색 결과에서 청구 번호(ApplicationNumber) 기준으로 중복을 제거하고,
     각 특허별 가장 유사도가 높은(distance가 낮은) 청크만 남겨 상위 k개를 반환합니다.
@@ -61,7 +61,7 @@ def get_unique_patents(results, target_k=3):
     
     return final_results
 
-def patent_retrieval(query_text, db_path, collection_name, model_name, n_results=3):
+def search_query(query_text, db_path="./patent_chroma_db", collection_name="patents", model_name="nlpai-lab/KURE-v1", n_results=20):
     """
     지정된 ChromaDB에서 아이디어(쿼리 텍스트)를 검색합니다.
     """
@@ -107,19 +107,8 @@ def patent_retrieval(query_text, db_path, collection_name, model_name, n_results
             print("검색 결과가 없습니다.")
             return
         results = get_unique_patents(results) #중복 특허 제거
-        
-        for idx, item in enumerate(results):
-            distance = item['distance']
-            metadata = item['metadata']
-            document = item['document']
-            
-            print(f"\n[Result {idx+1}]")
-            print(f"  Distance  : {distance:.4f} (낮을수록 유사)")
-            print(f"  InventionName    : {metadata.get('InventionName')}")
-            print(f"  Applicant    : {metadata.get('Applicant')}")
-            print(f"  ApplicationNumber: {metadata.get('ApplicationNumber')}")
-            print(f"  Document  : {document[:250]}...") # 문서가 길 수 있으므로 250자만 미리보기
-            print("-" * 20)
+
+        return results
             
     except Exception as e:
         print(f"검색 중 예상치 못한 오류가 발생했습니다: {e}")
