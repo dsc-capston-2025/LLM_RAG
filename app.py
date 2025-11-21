@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, views
 from flask_cors import CORS
 from openai import OpenAI
-from module import Generator
+from module.Generator import execute_router
 from dotenv import load_dotenv
 
 OPENROUTER_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -23,52 +23,29 @@ def process_idea_text(text: str) -> dict:
 
    인터페이스 정의를 위한 임시 데이터 정의 
     """
-    response = Generator.execute_router(text, model_name="x-ai/grok-4.1-fast", api_client=api_client)
-    print(f"전달받은 아이디어 텍스트: {text}")
-
-    #response = my_patent_analysis_module.analyze(text)
-
-    success_response = {
-        "status": "success",
-        "chatResponse": "귀하의 아이디어와 유사도가 높은 3건의 특허를 찾았습니다. 핵심 키워드는 'A'와 'B'이며, 전반적인 기술 동향은 다음과 같습니다...",
-        "patentList": [
-            {
-                "matchstatus": "failed",
-                "patentId": "KR1020230012345",
-                "title": "첫 번째 유사 특허 제목",
-                "applicationDate": "2023-01-10",
-                "applicant": "특허 출원인 A",
-                "summary": "별로 유사하지 않은 특허 같아요",
-                "relevanceScore": 0.32
-            },
-            {
-                "matchstatus": "success",
-                "patentId": "US20220056789A1",
-                "title": "두 번째 유사 특허 제목",
-                "applicationDate": "2022-05-20",
-                "applicant": "특허 출원인 B",
-                "summary": "B 기술을 C 분야에 적용하는 혁신적인 방안을 제시합니다...",
-                "relevanceScore": 0.88
-            },
-            {
-                "matchstatus": "success",
-                "patentId": "JP20210098765",
-                "title": "세 번째 유사 특허 제목",
-                "applicationDate": "2021-11-30",
-                "applicant": "특허 출원인 C",
-                "summary": "기존 A 기술의 단점을 보완하는 새로운 아키텍처를 제안합니다...",
-                "relevanceScore": 0.85
-            }
-        ]
-    }
-
-  failed_response = {
-"status": "clarification_needed",
-"chatResponse": "아이디어를 분석했지만, 내용이 너무 광범위합니다. 'AI'라고 하셨는데, '컴퓨터 비전' 분야인가요, '자연어 처리' 분야인가요? 조금 더 구체적으로 알려주세요.",
-"patentList": []
-}
+    success_bool, eval_results, abstract_result = execute_router(text, model_name="x-ai/grok-4.1-fast", api_client=api_client)
+    patent_list = []
     
-    return success_response
+    if  success_bool:
+        for i in range(len(eval_results)):
+            patent_data = {
+                "matchstatus": "success",
+                "patentId": eval_results[i][0].get('ApplicationNumber'),
+                "title": eval_results[i][0].get('InventionName'),
+                "applicationDate": eval_results[i][0].get('ApplicationDate'),
+                "applicant": eval_results[i][0].get('Applicant'),
+                "summary": eval_results[i][1][1],
+                "relevanceScore": str(int(eval_results[i][1][0])/100)
+                    }
+            patent_list.append(patent_data)
+
+    response = {
+            "status": "success" if success_bool else "failed",
+            "chatResponse": abstract_result,
+            "patentList": patent_list
+            }
+    
+    return response
 
 
 @app.route('/api/analyze-idea', methods=['POST'])
@@ -80,7 +57,7 @@ def analyze_idea():
         # Frontend에서 보낸 JSON 데이터를 수신.
         # React에서 '{"idea_text": "..."}'와 같은 형태로 보낸다고 가정.
         data = request.json
-        idea_text = data.get('idea_text')
+        idea_text = data.get('idea')
 
         if not idea_text:
             return jsonify({"status": "error", "message": "No 'idea_text' provided."}), 400

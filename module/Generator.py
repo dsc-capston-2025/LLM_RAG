@@ -59,14 +59,14 @@ EVALUATION_SYSTEM_PROMPT = """
 ---
 ### ⚖️ 평가 및 분석 지침
 
-1.  **`eval_score` (0-100점 사이의 정수):**
+1.  **`eval_score` (0-100% 사이의 정수):**
     * 이 점수는 [사용자 아이디어]가 [특허 문서 조각]에 의해 **'기술적으로 얼마나 커버되는가(유사도)'**를 나타냅니다.
     * 비판보다는 **'연관성 발견'**에 초점을 맞추어 점수를 부여하세요.
 
-    * **0~24점 (낮은 연관성):** 단순 키워드만 겹칠 뿐, 기술적 해결 원리가 전혀 다릅니다.
-    * **25~49점 (부분 유사):** 기술 분야나 적용 대상은 다르지만, **'기반이 되는 기술적 메커니즘'**이나 **'아이디어의 일부 구성요소'**가 유사합니다. (예: '드론 배송' 아이디어 vs '로봇 배송' 특허)
-    * **50~74점 (높은 유사성):** 해결하려는 문제와 목적이 같고, 핵심적인 기술 수단이 상당 부분 겹칩니다. (강력한 선행기술 후보)
-    * **75~100점 (실질적 동일):** [사용자 아이디어]의 핵심 발명이 [특허 문서 조각]에 이미 구체적으로 구현되어 있습니다.
+    * **0~24% (낮은 연관성):** 단순 키워드만 겹칠 뿐, 기술적 해결 원리가 전혀 다릅니다.
+    * **25~49% (부분 유사):** 기술 분야나 적용 대상은 다르지만, **'기반이 되는 기술적 메커니즘'**이나 **'아이디어의 일부 구성요소'**가 유사합니다. (예: '드론 배송' 아이디어 vs '로봇 배송' 특허)
+    * **50~74% (높은 유사성):** 해결하려는 문제와 목적이 같고, 핵심적인 기술 수단이 상당 부분 겹칩니다. (강력한 선행기술 후보)
+    * **75~100% (실질적 동일):** [사용자 아이디어]의 핵심 발명이 [특허 문서 조각]에 이미 구체적으로 구현되어 있습니다.
 
 2.  **`reason` (문자열):**
     * **[핵심 요구사항]** 차이점을 설명하는 것도 중요하지만 **'어떤 부분이 유사한지'**를 중점적으로 설명하세요.
@@ -78,6 +78,37 @@ EVALUATION_SYSTEM_PROMPT = """
 ---
 
 이제 [사용자 아이디어]와 [특허 문서 조각]을 비교 분석하여, **유사성을 중심으로** 평가하고 `cal_evalscore` 함수를 호출하세요.
+"""
+
+ABSTRACTOR_SYSTEM_PROMPT = """
+# Role Definition
+당신은 숙련된 특허 변리사이자 R&D 기술 컨설턴트입니다. 당신의 임무는 사용자의 아이디어와 이를 기반으로 검색된 '유사 특허 리스트'를 종합적으로 분석하여, 사용자에게 통찰력 있는 최종 보고서를 제공하는 것입니다.
+
+# Input Data Description
+당신에게는 다음과 같은 정보가 텍스트 형식으로 제공됩니다:
+1. [사용자 아이디어]: 사용자가 입력한 발명 아이디어
+2. [검색된 특허]: 검색된 특허들의 리스트. 각 항목은 다음을 포함함:
+   - 특허 제목
+   - LLM Judge가 분석한 주요 유사점 및 차이점
+
+# Task Objectives
+제공된 정보를 바탕으로 다음 섹션을 포함하는 마크다운(Markdown) 형식의 보고서를 작성하세요.
+
+## 1. 종합 검토 의견 (Executive Summary)
+- 사용자의 아이디어가 기존 선행 기술들과 비교했을 때 등록 가능성이 있는지, 혹은 기술적 장벽이 높은지 전반적인 난이도를 3~4문장으로 요약하세요.
+- 가장 유사도가 높은 특허 1~2개를 특정하여 언급하고, 핵심적인 겹치는 기술 요소를 지적하세요.
+
+## 2. 기술적 제언 (Strategic Advice)
+- 사용자가 아이디어를 구체화하거나 특허를 출원하기 위해 보완해야 할 기술적 공백(White Space)이나 회피 설계 방향을 제시하세요.
+
+# Guidelines & Constraints
+- **Hallucination 방지:** 제공된 [Retrieved Patents]에 없는 내용은 절대 지어내지 마세요.
+- **객관성 유지:** 사용자의 아이디어를 무조건 칭찬하기보다, 냉철하게 선행 기술과의 중복성을 지적하는 것이 사용자에게 더 도움이 됩니다.
+- **가독성:** 전문 용어를 사용하되, 학부생 수준의 엔지니어가 이해할 수 있도록 명확하게 서술하세요.
+- **언어:** 한국어(Korean)로 작성하세요.
+
+# Tone
+- 전문적이고, 분석적이며, 객관적인 톤을 유지하세요.
 """
 
 # --- 5. Function Calling 테스트 ---
@@ -154,11 +185,8 @@ def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/g
     "messages": messages
 }
     try:
-        # 1. '아이디어 게이트키퍼' LLM 호출
         response = api_client.chat.completions.create(**request)
 
-
-        print("\n[게이트키퍼 LLM 응답]")
         print("--------------------")
         print("--------------------")
         print(response.choices[0].message.content)
@@ -177,7 +205,46 @@ def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/g
         print(f"에러 상세: {e}")
         return {"status": "error", "message": str(e)}
 
+def abstract_result(user_query, eval_results, api_client=api_client):
+    result = []
+    details = "[사용자 아이디어]\n-{user_query}\n\n[검색된 특허]\n"
+    
+    for i in eval_details:
+        details += f"{i+1}.\n-제목: {eval_results[i][0].get('InventionName')}\n-평가정보: {eval_results[i][1][1]}\n\n"
+    
+    messages = [
+  {
+    "role": "system",
+    "content": ABSTRACTOR_SYSTEM_PROMPT
+  },
+  {
+    "role": "user",
+    "content": details,
+  }
+]
+    request = {
+    "model": model_name,
+    "messages": messages
+}
+
+    try:
+        # 1. '아이디어 게이트키퍼' LLM 호출
+        response = api_client.chat.completions.create(**request)
+
+        response_content = response.choices[0].message.content
+        print("\n[게이트키퍼 LLM 응답]")
+        print("--------------------")
+        print("--------------------")
+        print(response_content)
+        
+        return response_content
+            
+    except Exception as e:
+        print(f"\n--- [오류] LLM API 호출 또는 라우팅 중 오류 발생 ---")
+        print(f"에러 상세: {e}")
+
 def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_client=api_client):
+    success_bool = False
     """
     사용자 아이디어를 받아 게이트키퍼 LLM을 호출하고,
     결과에 따라 RAG 검색을 트리거하거나 사용자에게 피드백을 반환합니다.
@@ -204,13 +271,18 @@ def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_
     try:
         # 1. '아이디어 게이트키퍼' LLM 호출
         response = api_client.chat.completions.create(**request)
-
+        response_text = response.choices[0].message.content
 
         print("\n[게이트키퍼 LLM 응답]")
         print("--------------------")
         print("--------------------")
         print(response.choices[0].message.content)
+        
+        if not response.choices[0].message.tool_calls:
+            return success_bool, None, response_text
 
+        success_bool = True
+        
         for tool_call in response.choices[0].message.tool_calls:
 
             tool_name = tool_call.function.name
@@ -220,14 +292,17 @@ def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_
         eval_results = []
         patent_chunks = TOOL_MAPPING[tool_name](**tool_args)
         for idx, item in enumerate(patent_chunks):
+            patent_metadata = item['metadata']
             document = item['document']
             eval_result = evaluation_idea(improved_query, document)
-            eval_results.append(eval_result)
+            eval_results.append((patent_metadata, eval_result))
 
-        print(eval_results)
+        result = abstract_result(user_query, eval_results, api_client)
+        
+        return success_bool, eval_results, result
     except Exception as e:
         print(f"\n--- [오류] LLM API 호출 또는 라우팅 중 오류 발생 ---")
         print(f"에러 상세: {e}")
-        return {"status": "error", "message": str(e)}
+        return "error", None, str(e)
         
 
