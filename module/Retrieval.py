@@ -4,6 +4,8 @@ import os
 import csv
 from chromadb.utils import embedding_functions
 
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
 def get_unique_patents(results):
     """
     ChromaDB 검색 결과에서 청구 번호(ApplicationNumber) 기준으로 중복을 제거하고,
@@ -61,7 +63,7 @@ def get_unique_patents(results):
     
     return final_results
 
-def search_query(query_text, db_path="./patent_chroma_db", collection_name="patents", model_name="nlpai-lab/KURE-v1", n_results=20):
+def search_query(query_text, db_path="./patent_chroma_db", collection_name="patents", model_name="gemini-embedding-001", n_results=20):
     """
     지정된 ChromaDB에서 아이디어(쿼리 텍스트)를 검색합니다.
     """
@@ -74,9 +76,10 @@ def search_query(query_text, db_path="./patent_chroma_db", collection_name="pate
         
         # 2. 임베딩 함수 설정 (DB에 저장할 때 사용한 것과 동일해야 함)
         try:
-            embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=model_name
-            )
+            embedding_func = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
+    api_key=GOOGLE_API_KEY,
+    model_name=model_name # 최신 모델 권장
+)
         except Exception as e:
             print(f"검색을 위한 임베딩 모델 로드 중 오류 발생: {e}")
             return

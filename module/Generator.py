@@ -1,6 +1,7 @@
-from Retrieval import search_query
+from .Retrieval import search_query
 import json, requests
 from openai import OpenAI
+import traceback
 
 ## 라우터 llm 시스템 프롬프트
 ROUTER_SYSTEM_PROMPT = """
@@ -89,7 +90,7 @@ ABSTRACTOR_SYSTEM_PROMPT = """
 1. [사용자 아이디어]: 사용자가 입력한 발명 아이디어
 2. [검색된 특허]: 검색된 특허들의 리스트. 각 항목은 다음을 포함함:
    - 특허 제목
-   - LLM Judge가 분석한 주요 유사점 및 차이점
+   - LLM Judge가 분석한 주요 유사점(0~100%) 및 차이점
 
 # Task Objectives
 제공된 정보를 바탕으로 다음 섹션을 포함하는 마크다운(Markdown) 형식의 보고서를 작성하세요.
@@ -163,7 +164,7 @@ EVAL_TOOLS = [
 TOOL_MAPPING = {"search_query": search_query}
 
         
-def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/grok-4.1-fast", api_client=api_client):
+def evaluation_idea(user_idea, patent_chunk, model_name, api_client):
     print(f"[사용자 아이디어]: {user_idea}")
     print(f"[특허 문서 조각]: {patent_chunk[:100]}")
 
@@ -205,11 +206,11 @@ def evaluation_idea(user_idea: str, patent_chunk: str, model_name: str = "x-ai/g
         print(f"에러 상세: {e}")
         return {"status": "error", "message": str(e)}
 
-def abstract_result(user_query, eval_results, api_client=api_client):
+def abstract_result(user_query, eval_results, model_name, api_client):
     result = []
     details = "[사용자 아이디어]\n-{user_query}\n\n[검색된 특허]\n"
     
-    for i in eval_details:
+    for i in range(len(eval_results)):
         details += f"{i+1}.\n-제목: {eval_results[i][0].get('InventionName')}\n-평가정보: {eval_results[i][1][1]}\n\n"
     
     messages = [
@@ -243,7 +244,7 @@ def abstract_result(user_query, eval_results, api_client=api_client):
         print(f"\n--- [오류] LLM API 호출 또는 라우팅 중 오류 발생 ---")
         print(f"에러 상세: {e}")
 
-def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_client=api_client):
+def execute_router(user_query, model_name, api_client):
     success_bool = False
     """
     사용자 아이디어를 받아 게이트키퍼 LLM을 호출하고,
@@ -270,6 +271,7 @@ def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_
 }
     try:
         # 1. '아이디어 게이트키퍼' LLM 호출
+
         response = api_client.chat.completions.create(**request)
         response_text = response.choices[0].message.content
 
@@ -287,20 +289,29 @@ def execute_router(user_query: str, model_name: str = "x-ai/grok-4.1-fast", api_
 
             tool_name = tool_call.function.name
             tool_args = json.loads(tool_call.function.arguments)
-            improved_query = tool_args['query']
+            improved_query = tool_args['query_text']
 
         eval_results = []
         patent_chunks = TOOL_MAPPING[tool_name](**tool_args)
+
+        if not patent_chunks:
+            success_bool = False
+            response_txt = "사용자님의 아이디어에 대해 유사한 특허를 검색 시도 하였으나 발견된 특허가 존재하지 않습니다."
+            return success_bool, None, response_txt
+        print("debug: 체크")
         for idx, item in enumerate(patent_chunks):
             patent_metadata = item['metadata']
             document = item['document']
-            eval_result = evaluation_idea(improved_query, document)
+            eval_result = evaluation_idea(improved_query, document, model_name, api_client)
             eval_results.append((patent_metadata, eval_result))
 
-        result = abstract_result(user_query, eval_results, api_client)
+        result = abstract_result(user_query, eval_results,model_name, api_client)
         
         return success_bool, eval_results, result
     except Exception as e:
+        error_trace = traceback.format_exc()
+        print(error_trace)
+        print(f"Error occurred: {e}")
         print(f"\n--- [오류] LLM API 호출 또는 라우팅 중 오류 발생 ---")
         print(f"에러 상세: {e}")
         return "error", None, str(e)

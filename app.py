@@ -3,13 +3,16 @@ from flask_cors import CORS
 from openai import OpenAI
 from module.Generator import execute_router
 from dotenv import load_dotenv
+import os
+import traceback
 
-OPENROUTER_API_KEY = os.environ.get("OPENAI_API_KEY")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 api_client = OpenAI(
-  base_url="https://openrouter.ai/api/v1",
-  api_key=OPENROUTER_API_KEY,
+  base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+  api_key=GOOGLE_API_KEY,
 )
+
 
 app = Flask(__name__)
 
@@ -23,9 +26,9 @@ def process_idea_text(text: str) -> dict:
 
    인터페이스 정의를 위한 임시 데이터 정의 
     """
-    success_bool, eval_results, abstract_result = execute_router(text, model_name="x-ai/grok-4.1-fast", api_client=api_client)
+    success_bool, eval_results, abstract_result = execute_router(text, model_name="gemini-2.5-flash", api_client=api_client)
     patent_list = []
-    
+    print(f"success_bool: {success_bool} 확인")
     if  success_bool:
         for i in range(len(eval_results)):
             patent_data = {
@@ -69,6 +72,8 @@ def analyze_idea():
         return jsonify(response_data)
 
     except Exception as e:
+        error_trace = traceback.format_exc()
+        print(error_trace)
         print(f"Error occurred: {e}")
         return jsonify({"status": "error", "message": "An internal server error occurred."}), 500
 
